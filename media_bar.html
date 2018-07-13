@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Web</title>
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>	
+    <script type="text/javascript" src="./osvc_node.js"></script>	
+	<link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.css"></link>	
+	<style>
+		.tab{
+			padding:2px;
+			border-style:outset;
+		}
+		.tab:active {
+			border-style:inset;
+		}
+		.tab:hover > .focus {
+			color: blue;
+		}
+		sup:hover{
+			color:red
+		}
+		.focus{
+			display:inline;
+		}
+	</style>
+
+</head>
+<body>
+	<div id="cti-container" >		
+		<div>
+		  <table>
+			<tr>
+			  <td><b>Incoming Call:</b> <input type="text" id="phoneTxt" /></td>
+			  <td><button id="acceptBtn">Accept Call</button></td>
+			  <td><input type="checkbox" id="createInc" name="createInc">Create Incident</td>
+			</tr>
+		  </table>
+		</div>		
+	</div>
+	<div id="cti-calls">
+		<b>Ongoing Calls:</b><ul style="list-style: none;display:flex" id="calls">
+		</ul>
+	</div>
+</body>
+<script>
+	const osvcNode = require('osvc_node');
+	var workspaceRecordMap = {};
+	$(document).ready(function() {
+	
+		var restUrl = "";
+		var acctID = "";
+		var sessionID = "";
+		var phoneNum = "";
+		var result = "";
+		var createIncident = false;
+		var globalContext = null;
+		var extensionProvider = null;
+		var rnClient = {};
+		
+		const contextData = async () =>{
+			let sdk = await ORACLE_SERVICE_CLOUD.extension_loader.load("Sample_CTI_MediaBar_Extension", "1");
+			extensionProvider = sdk;
+			globalContext = await sdk.getGlobalContext();
+			restUrl = globalContext.getInterfaceServiceUrl("REST");
+			let  = document.location.host.split(".")[0];
+			acctID = globalContext.getAccountId().toString();
+			sessionID = await globalContext.getSessionToken();
+			rnClient = osvcNode.Client({
+				interface: intName,
+				session: sessionID,
+				version: 'v1.4'
+			});
+		}
+
+		contextData().then(()=>{
+			console.log("Context Data loaded");
+		})
+	
+	
+		$("#acceptBtn").click(function() {			
+		
+			console.log("Button Clicked! " + $('#phoneTxt').val() + "--" + $('#createInc').is(':checked') );
+			createIncident = $('#createInc').is(':checked');
+			
+			if($("#phoneTxt").val() == "") 
+			{
+				alert("Please enter a phone number!");
+				return;
+			}
+			else {
+				phoneNum = $("#phoneTxt").val();
+				var count = "";
+				
+				//lookup contact					
+				contactLookup(restUrl, sessionID, phoneNum).done(function(jsonData){
+					console.log(jsonData);
+					console.log(jsonData.items[0]);
+					result = jsonData;
+					count = jsonData.items[0].count;
+				});
+				
+				//print result count					
+				console.log(count);
+				
+				// actions
+				switch(count) {
+					case 0:
+						console.log("new record");
+						if(!createIncident){
+							openContactRecord(0,phoneNum);
+						} else {
+							globalContext.getSessionToken().then(
+								function(sessionToken){
+									createContactRecord(sessionToken,phoneNum).done(
+										function(contactJsonObj){
+											console.log(' Contact Id:'+contactJsonObj.id);
+											createIncidentRecord(sessionToken,contactJsonObj.id).done(
+												function(incidentJsonObj){
+													openWorkspaceRecord('Incident',incidentJsonObj.id,phoneNum);
+												}
+											);
+										}
+									);
+								}
+							);
+						}
+						break;
+					case 1:
+						console.log("Open Contact: " + result.items[0].rows[0][0]);
+						if(!createIncident){
+							openContactRecord(result.items[0].rows[0][0],phoneNum);
+						} else {
+							globalContext.getSessionToken().then(
+								function(sessionToken){
+									createIncidentRecord(sessionToken,result.items[0].rows[0][0]).done(
+										function(incidentJsonObj){
+											openWorkspaceRecord('Incident',incidentJsonObj.id,phoneNum);
+										}
+									);
+								}
+							);
+						}
+						break;
+					default:
+						console.log("Multiple records or something broke..open report");
+						openReport();
+						break;
+				}			
+			}
+		});	
+		
+		// check if contact exists in the db
+		const contactLookup = (restUrl, sessionID, phoneNumber)=>{
+			console.log(restUrl + ' |-| ' + sessionID + ' |-| ' + phoneNumber);
+			var ajaxUrl = restUrl + "/connect/v1.3/queryResults/?query=SELECT id FROM contacts WHERE phones.phonelist.number='"+ phoneNumber + "'";
+			return $.ajax({
+				type: "GET",
+				async: false,
+				url: ajaxUrl,
+				beforeSend: function (xhr) { xhr.setRequestHeader("Authorization", "Session " + sessionID); }
+			});
+		}
+		
+		//open workspace record..
+		function openContactRecord(recordID,phoneNum)
+		{
+			console.log("Opening record ID : " + recordID);
+			ORACLE_SERVICE_CLOUD.extension_loader.load("MSE_CTI_MediaBar" , "1")
+			.then(function(extensionProvider)
+			{
+				extensionProvider.registerWorkspaceExtension(function(WorkspaceRecord) {						
+					if(recordID === 0) { //new record
+						WorkspaceRecord.createWorkspaceRecord('Contact', function(workspaceRecord){
+							callback(workspaceRecord,phoneNum);
+							//set phone field
+							WorkspaceRecord.updateField('Contact.PhOffice', phoneNum);
+						}); 
+					}
+					else {
+						WorkspaceRecord.editWorkspaceRecord('Contact', recordID, function(workspaceRecord){
+							callback(workspaceRecord,phoneNum);
+						});
+					}
+				});
+			});
+		
+			function callback(workspaceRecord,phoneNum)
+			{
+				addWorkspaceButton(workspaceRecord,phoneNum);
+				console.log("!!!");
+			}
+		}
+					
+		//open report..filter by phone
+		const openReport = function (){
+				ORACLE_SERVICE_CLOUD.extension_loader.load('contactSearchExtension').then(
+					function(sdk){
+						sdk.registerAnalyticsExtension(function(analyticsContext){
+							// contact report created with phone filter added to the list
+							analyticsContext.createReport("<Custom_Report_ID>").then(
+								function(extensionReport){
+									var filterList = extensionReport.getReportFilters().getFilterList();
+									filterList[0].setValue(phoneNum);
+									extensionReport.executeReport();
+									console.log(filterList);
+								}
+							);
+						});
+					}
+				);
+		}
+		
+	
+		function createIncidentRecord(sessionToken,contactId){
+			return $.ajax({
+				  url: globalContext.getInterfaceServiceUrl('rest')+'/connect/v1.3/incidents',
+				  method: "POST",
+				  headers:{'Authorization':'Session '+sessionToken},
+				  data: JSON.stringify({
+					primaryContact:
+					{
+						id: parseInt(contactId)
+					},
+					subject: "CTI Incident"
+					}),
+				  dataType: "json"
+				});
+		}
+		
+		function createContactRecord(sessionToken,contactNumber){
+			return $.ajax({
+				  url: globalContext.getInterfaceServiceUrl('rest')+'/connect/v1.3/contacts',
+				  method: "POST",
+				  headers:{'Authorization':'Session '+sessionToken},
+				  data: JSON.stringify({
+										name : {
+											first: 'unknown',
+											last: 'contact'
+										},
+										phones :[
+										{
+											number: contactNumber,
+											phoneType: {
+												id:1
+											}
+										}
+										]
+									}),
+				  dataType: "json"
+				});
+		}
+		
+		function openWorkspaceRecord(workspaceType,contactId,phoneNum){
+			extensionProvider.registerWorkspaceExtension(
+				function(workspaceRecord){
+					workspaceRecord.editWorkspaceRecord(workspaceType,contactId,function(workspaceRecord){
+							callback(workspaceRecord,phoneNum);
+						});
+				}
+			);
+		}
+		
+		function addWorkspaceButton(workspaceRecord,phoneNum){
+			workspaceRecordMap[workspaceRecord.getContextId()] = workspaceRecord;
+			workspaceRecord.addRecordClosingListener(function(workspaceRecordEventParam){
+				$("#"+workspaceRecord.getContextId()).remove();
+			});
+			$("#calls").append("<li class='tab' id='"+workspaceRecord.getContextId()+"' onclick='findAndFocus(\""+workspaceRecord.getContextId()+"\")'><div class='focus'>"+phoneNum+"</div><sup><i class='fa fa-window-close' onclick='stopEvent();return closeCurrentWorkspace(\""+workspaceRecord.getContextId()+"\")'></i></sup></li>");
+		}
+	});
+	
+	function closeCurrentWorkspace(contextId){
+		workspaceRecordMap[contextId].closeEditor().then(
+			function(){
+				$("#"+contextId).remove();
+				workspaceRecordMap[contextId] = null;
+			}
+		);
+		return false;
+	}
+	
+	function findAndFocus(contextId){
+		workspaceRecordMap[contextId].findAndFocus(workspaceRecordMap[contextId].getWorkspaceRecordType(),workspaceRecordMap[contextId].getWorkspaceRecordId());
+	}
+	
+	function stopEvent(e){
+		var evt = e ? e:window.event;
+		if (evt.stopPropagation)    evt.stopPropagation();
+		if (evt.cancelBubble!=null) evt.cancelBubble = true;
+	}
+	</script>
+</html>
