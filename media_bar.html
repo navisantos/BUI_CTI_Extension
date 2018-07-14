@@ -9,251 +9,239 @@
 </head>
 <body>
 	<div id="cti-container">
+		<cti-searchbar></cti-searchbar>
+	</div>
+</body>
+
+<!-- Rendering Library -->
+<script type="text/javascript" src="./vue.js"></script>
+<script type="text/javascript" src="./osvc_node.js"></script>	
+
+<!-- Media bar HTML -->
+<script type="text/x-template" id="cti-searchbar">
+	<div>
 		<div id="cti-search">
 		  <table>
 			<tr>
-			  <td><b>Incoming Call:</b> <input type="text" id="phoneTxt" /></td>
-			  <td><button id="acceptBtn">Accept Call</button></td>
-			  <td><input type="checkbox" id="createInc" name="createInc">Create Incident</td>
+			  <td><b>Incoming Call:</b> <input type="text" v-model="phoneNum" /></td>
+			  <td><button v-on:click="contactSearch">Accept Call</button></td>
+			  <td><input type="checkbox" v-model="createIncident" id="createInc" name="createInc">Create Incident</td>
 			</tr>
 		  </table>
 		</div>		
 		<div id="cti-calls">
-			<b>Ongoing Calls:</b><ul style="list-style: none;display:flex" id="calls">
+			<b>Ongoing Calls:</b><ul style="list-style: none;display:flex" id="calls">			
+				<li v-for="call in ongoingCalls" class='tab' id="call.workspaceRecord.getContextId()" v-on:click="this.findAndFocus(call)" >
+					<div class='focus'>{{call.phoneNum}}</div>
+					<sup><i class='fa fa-window-close' v-on:click='closeCurrentWorkspace(call)'></i></sup>
+				</li>
 			</ul>
 		</div>
 	</div>
-</body>
-
-<!-- Taps into the REST API -->
-<script type="text/javascript" src="./osvc_node.js"></script>	
-<!-- Rendering Library -->
-<script type="text/javascript" src="./vue.js"></script>	
-<!-- Media bar HTML -->
-<script type="text/x-template" id="cti-searchbar">
-	<div id="cti-search">
-	  <table>
-		<tr>
-		  <td><b>Incoming Call:</b> <input type="text" id="phoneTxt" /></td>
-		  <td><button id="acceptBtn">Accept Call</button></td>
-		  <td><input type="checkbox" id="createInc" name="createInc">Create Incident</td>
-		</tr>
-	  </table>
-	</div>		
-	<div id="cti-calls">
-		<b>Ongoing Calls:</b><ul style="list-style: none;display:flex" id="calls">
-		</ul>
-	</div>
 </script>
 
-
 <script>
-	
 	const osvcNode = require('osvc_node');
-	var workspaceRecordMap = {};
-	var phoneNum = "";
-	var result = "";
-	var createIncident = false;
-	var globalContext = null;
-	var rnClient = {};
-	
-	const contextData = async () =>{
-		let sdk = await ORACLE_SERVICE_CLOUD.extension_loader.load("Sample_CTI_MediaBar_Extension", "1");
-		globalContext = await sdk.getGlobalContext();
-		let intName = document.location.host.split(".")[0];
-		let sessionID = await globalContext.getSessionToken();
-		rnClient = osvcNode.Client({
-			interface: intName,
-			session: sessionID,
-			version: 'v1.4'
-		});
-	}
-
-	contextData().then(()=>{
-		console.log("Context Data loaded");
-	})
-
-
-	document.getElementById("acceptBtn").addEventListener('click',async function(){			
-	
-		console.log("Button Clicked! " + document.getElementById('phoneTxt').value + "--" + document.getElementById('createInc').checked);
-		createIncident = document.getElementById('createInc').checked;
+	Vue.component('cti-searchbar', {
 		
-		if(document.getElementById("phoneTxt").value == "") 
-		{
-			alert("Please enter a phone number!");
-			return;
-		}
-		else {
-			phoneNum = document.getElementById("phoneTxt").value;
-			var count = "";
-			
-			//lookup contact					
-			let jsonData = await contactLookup(phoneNum);
-			console.log(jsonData);
-			result = jsonData;
-			count = jsonData.length;
-			
-			
-			//print result count					
-			console.log(count);
-			
-				// actions
-				switch(count) {
-					case 0:
-						console.log("new record");
-						if(!createIncident){
-							openContactRecord(0,phoneNum).then(()=>{
-								console.log("Opening Contact Record");
-							});
-						} else {
-							let contactJsonObj = await createContactRecord(phoneNum);
-							console.log(' Contact Id:'+ contactJsonObj.id);
-							let incidentJsonObj = await createIncidentRecord(contactJsonObj.id);
-							await openWorkspaceRecord('Incident',incidentJsonObj.id,phoneNum);
-						}
-						break;
-					case 1:
-						console.log("Open Contact: " + result[0].id);
-						if(!createIncident){
-							await openContactRecord(result[0].id,phoneNum);
-						} else {
-							let incidentJsonObj = await createIncidentRecord(result[0].id)
-							await openWorkspaceRecord('Incident',incidentJsonObj.id,phoneNum);
-						}
-						break;
-					default:
-						console.log("Multiple records or something broke..open report");
-						openReport();
-						break;
-				}
-		}
-	});	
-	
-	// check if contact exists in the db
-	const contactLookup = async (phoneNumber)=>{
-		let options = {
-			client: rnClient,
-			query: `SELECT id FROM contacts WHERE phones.phonelist.number='${phoneNumber}'`,
-			annotation: "Querying phone number"
-		}
-		return await osvcNode.QueryResults.query(options);
-	}
-	
-	//open workspace record..
-	const openContactRecord = async (recordID,phoneNum) =>{
-		console.log("Opening record ID : " + recordID);
-		let extensionProvider = await ORACLE_SERVICE_CLOUD.extension_loader.load("MSE_CTI_MediaBar" , "1")
-		extensionProvider.registerWorkspaceExtension(function(WorkspaceRecord) {						
-			if(recordID === 0) { //new record
-				WorkspaceRecord.createWorkspaceRecord('Contact', function(workspaceRecord){
-					addWorkspaceButton(workspaceRecord,phoneNum);
-					//set phone field
-					WorkspaceRecord.updateField('Contact.PhOffice', phoneNum);
-				}); 
-			}
-			else {
-				WorkspaceRecord.editWorkspaceRecord('Contact', recordID, function(workspaceRecord){
-					addWorkspaceButton(workspaceRecord,phoneNum);
-				});
-			}
-		});
-	}
-						
-	//open report..filter by phone
-	const openReport = async (reportId) => {
-		let sdk = await ORACLE_SERVICE_CLOUD.extension_loader.load('contactSearchExtension');
-		sdk.registerAnalyticsExtension(async function(analyticsContext){
-			// contact report created with phone filter added to the list
-			let extensionReport = await analyticsContext.createReport(reportId);
-			let filterList = extensionReport.getReportFilters().getFilterList();
-			filterList[0].setValue(phoneNum);
-			extensionReport.executeReport();
-			console.log(filterList);
-		});
-	}
+		// Specifies the template
+		template: '#cti-searchbar',
 
-	const createIncidentRecord = async (contactId) =>{
-		let options = {
-			client: rnClient,
-			url: "incidents",
-			annotation: "creating incident record",
-			json: {
-				primaryContact: {
-				id: parseInt(contactId)
+		// Sets the initial data
+		data: ()=> ({
+			phoneNum: "",
+			createIncident: false,
+			ongoingCalls: [],
+			rnClient: {},
+		}),
+
+	  	created: async function(){
+			await this.contextData()
+	  	},
+
+	  	methods:{
+	  		// initializes context data
+	  		contextData: async function(){
+				let sdk = await ORACLE_SERVICE_CLOUD.extension_loader.load("Sample_CTI_MediaBar_Extension", "1");
+				let globalContext = await sdk.getGlobalContext();
+				let interfaceName = document.location.host.split(".")[0];
+				let sessionID = await globalContext.getSessionToken();
+				this.rnClient = this.setClient(interfaceName,sessionID);
+				console.log("Context data set");
 			},
-				subject: "CTI Incident"
-			}
-		}
 
-		return await osvcNode.Connect.post(options);
-	}
-	
-	const createContactRecord = async (contactNumber)=> {
-		let options = {
-			client: rnClient,
-			url: "contacts",
-			annotation: "creating contact record",
-			json: {
-				name : {
-					first: 'unknown',
-					last: 'contact'
-				},
-				phones :[
-					{
-						number: contactNumber,
-						phoneType: {
-							id:1
-						}
+	  		// performs the contact search
+			contactSearch: async function(){
+				console.log(`Button Clicked! ${this.phoneNum} -- ${this.createIncident}`);		
+				if(this.phoneNum == "") 
+				{
+					alert("Please enter a phone number!");
+					return;
+				}
+				else {
+					//lookup contact					
+					let jsonData = await this.contactLookup(this.rnClient,this.phoneNum);			
+					if(jsonData.length === 0){
+						await this.createOrOpen(this.createIncident,jsonData);
+					}else if(jsonData.length === 1){
+						await this.matchedCreateOrOpen(this.createIncident,jsonData);
+					}else{
+						await this.openReport();
 					}
-				]
-			}
-		}
-		return await osvcNode.Connect.post(options);
-	}
-	
-	const openWorkspaceRecord = async(workspaceType,contactId,phoneNum)=>{
-		let extensionProvider = await ORACLE_SERVICE_CLOUD.extension_loader.load("Sample_CTI_MediaBar_Extension", "1");
-		extensionProvider.registerWorkspaceExtension((workspaceRecord) => {
-			workspaceRecord.editWorkspaceRecord(workspaceType,contactId,(workspaceRecord)=>{
-					addWorkspaceButton(workspaceRecord,phoneNum);
+				}
+			},
+
+			// If no matches, decide to open a new
+			// contact or incident workspace
+			createOrOpen: async function(createIncident,jsonData){
+				if(!createIncident){
+					await this.openContactRecord(0,this.phoneNum);
+				} else {
+					let contactJsonObj = await this.createContactRecord(this.rnClient,this.phoneNum);
+					let incidentJsonObj = await this.createIncidentRecord(this.rnClient,contactJsonObj.id);
+					await this.openWorkspaceRecord('Incident',incidentJsonObj.id,this.phoneNum);
+				}
+			},
+
+			// If there is a match, decide to open a new
+			// contact or incident workspace
+			matchedCreateOrOpen: async function(createIncident,jsonData){
+				if(!createIncident){
+					await this.openContactRecord(jsonData[0].id,this.phoneNum);
+				} else {
+					let incidentJsonObj = await this.createIncidentRecord(this.rnClient,jsonData[0].id)
+					await this.openWorkspaceRecord('Incident',incidentJsonObj.id,this.phoneNum);
+				}
+			},
+
+			// open report.. filter by phone
+			openReport: async function(reportId){
+				let sdk = await ORACLE_SERVICE_CLOUD.extension_loader.load('contactSearchExtension');
+				sdk.registerAnalyticsExtension(async function(analyticsContext){
+					// contact report created with phone filter added to the list
+					let extensionReport = await analyticsContext.createReport(reportId);
+					let filterList = extensionReport.getReportFilters().getFilterList();
+					filterList[0].setValue(this.phoneNum);
+					extensionReport.executeReport();
+					console.log(filterList);
 				});
+			},
+
+			// more for adding a button than anything else
+			openWorkspaceRecord: async function(workspaceType,contactId,phoneNum){
+				let extensionProvider = await ORACLE_SERVICE_CLOUD.extension_loader.load("Sample_CTI_MediaBar_Extension", "1");
+				extensionProvider.registerWorkspaceExtension((workspaceRecord) => {
+					workspaceRecord.editWorkspaceRecord(workspaceType,contactId,function(workspaceRecord){
+						this.addWorkspaceButton(workspaceRecord,phoneNum);
+					});
+				});
+			},
+
+			// open contact workspace record..
+			openContactRecord: async function(recordID,phoneNum){
+				console.log("Opening record ID : " + recordID);
+				let extensionProvider = await ORACLE_SERVICE_CLOUD.extension_loader.load("MSE_CTI_MediaBar" , "1")
+				extensionProvider.registerWorkspaceExtension(function(WorkspaceRecord) {						
+					if(recordID === 0) { //new record
+						WorkspaceRecord.createWorkspaceRecord('Contact', function(workspaceRecord){
+							this.addWorkspaceButton(workspaceRecord,phoneNum);
+							//set phone field
+							WorkspaceRecord.updateField('Contact.PhOffice', phoneNum);
+						}); 
+					}
+					else {
+						WorkspaceRecord.editWorkspaceRecord('Contact', recordID, function(workspaceRecord){
+							this.addWorkspaceButton(workspaceRecord,phoneNum);
+						});
+					}
+				});
+			},
+
+			// check if contact exists in the db
+			contactLookup: async function(rnClient,phoneNumber){
+				let options = {
+					client: rnClient,
+					query: `SELECT id FROM contacts WHERE phones.phonelist.number='${phoneNumber}'`,
+					annotation: "Querying phone number"
+				}
+				return await osvcNode.QueryResults.query(options);
+			},
+
+			// Creates an incident
+			createIncidentRecord: async function(rnClient,contactId){
+				let options = {
+					client: rnClient,
+					url: "incidents",
+					annotation: "creating incident record",
+					json: {
+						primaryContact: {
+						id: parseInt(contactId)
+					},
+						subject: "CTI Incident"
+					}
+				}
+
+				return await osvcNode.Connect.post(options);
+			},
+
+			// Creates a contact record
+			createContactRecord: async function(rnClient,contactNumber){
+				let options = {
+					client: rnClient,
+					url: "contacts",
+					annotation: "creating contact record",
+					json: {
+						name : {
+							first: 'unknown',
+							last: 'contact'
+						},
+						phones :[
+							{
+								number: contactNumber,
+								phoneType: {
+									id:1
+								}
+							}
+						]
+					}
+				}
+				return await osvcNode.Connect.post(options);
+			},
+
+			// Sets the client for interacting with the REST API
+			setClient: function(interfaceName, sessionId){
+				return osvcNode.Client({
+					interface: interfaceName,
+					session: sessionId,
+					version: 'v1.4'
+				})
+			},
+
+			addWorkspaceButton: function(workspaceRecord,phoneNum){
+				this.ongoingCalls.push({phoneNum: phoneNum, workspaceRecord: workspaceRecord});
+			},
+
+			// focus on the call workspace based 
+			// on the phone number that is clicked on
+	  		findAndFocus: function (call){
+	  			let workspaceRecord = call.workspaceRecord;
+				workspaceRecord.findAndFocus(workspaceRecord.getWorkspaceRecordType(),workspaceRecord.getWorkspaceRecordId());
+			},
+
+			closeCurrentWorkspace: async function(call){
+				let workspaceRecord = call.workspaceRecord;
+				let contextId = workspaceRecord.getContextId();
+				await workspaceRecord.closeEditor();
+				document.getElementById(contextId).remove();
+				this.calls.splice(this.calls.indexOf(call),1);
+				return false;
 			}
-		);
-	}
-	
-	function addWorkspaceButton(workspaceRecord,phoneNum){
-		workspaceRecordMap[workspaceRecord.getContextId()] = workspaceRecord;
-		workspaceRecord.addRecordClosingListener(function(workspaceRecordEventParam){
-			document.getElementById(workspaceRecord.getContextId()).remove();
-		});
-		document.getElementById("calls").append("<li class='tab' id='"+workspaceRecord.getContextId()+"' onclick='findAndFocus(\"" + workspaceRecord.getContextId() + "\")'><div class='focus'>"+phoneNum+"</div><sup><i class='fa fa-window-close' onclick='stopEvent();return closeCurrentWorkspace(\""+ workspaceRecord.getContextId() + "\")'></i></sup></li>");
-	}
-	
-	const closeCurrentWorkspace = async(contextId) => {
-		await workspaceRecordMap[contextId].closeEditor();
-		document.getElementById(contextId).remove();
-		workspaceRecordMap[contextId] = null;
-		return false;
-	}
-	
-	function findAndFocus(contextId){
-		workspaceRecordMap[contextId].findAndFocus(workspaceRecordMap[contextId].getWorkspaceRecordType(),workspaceRecordMap[contextId].getWorkspaceRecordId());
-	}
-	
-	function stopEvent(e){
-		var evt = e ? e:window.event;
-		if (evt.stopPropagation)    evt.stopPropagation();
-		if (evt.cancelBubble!=null) evt.cancelBubble = true;
-	}
+	  	}
+	});
 
-	// Vue.component('blog-card', {
-	// 	template: '#cti-searchbar',
-	// });
-
-	// new Vue({
-	//   el: '#cti-container',
-	// });
+	new Vue({
+	  el: '#cti-container',
+	});
 
 	</script>
 </html>
