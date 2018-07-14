@@ -1,0 +1,16 @@
+.tab{
+	padding:2px;
+	border-style:outset;
+}
+.tab:active {
+	border-style:inset;
+}
+.tab:hover > .focus {
+	color: blue;
+}
+sup:hover{
+	color:red
+}
+.focus{
+	display:inline;
+}
