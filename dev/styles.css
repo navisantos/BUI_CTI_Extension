@@ -5,12 +5,20 @@
 .tab:active {
 	border-style:inset;
 }
+.tab:hover{
+	cursor: pointer;
+}
 .tab:hover > .focus {
 	color: blue;
+	cursor: pointer;
 }
 sup:hover{
 	color:red
 }
 .focus{
 	display:inline;
+}
+ul.ongoing-calls{
+	list-style: none; 
+	display:flex
 }

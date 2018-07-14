@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script>
+	const ctiExtension = async () =>{
+		let extensionProvider = await ORACLE_SERVICE_CLOUD.extension_loader.load("Sample_CTI_Extensions" , "1");
+		extensionProvider.registerUserInterfaceExtension(async function(IUserInterfaceContext){
+			let IExtensionBarContext = await IUserInterfaceContext.getExtensionBarContext();
+			IExtensionBarContext.setDockable(true);
+			let IExtensionBarItem = await IExtensionBarContext.getExtensionBarItem('id');
+			IExtensionBarItem.setContentUrl('/media_bar.html');
+			IExtensionBarItem.render();
+		});
+	}
+
+	ctiExtension().then((res)=>{
+		console.log("loaded");
+	});
+
+</script>
+</head>
+<body>
+</body>
+</html>

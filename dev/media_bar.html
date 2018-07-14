@@ -9,13 +9,13 @@
 </head>
 <body>
 	<div id="cti-container">
+		<!-- Custom CTI Componenet -->
 		<cti-searchbar></cti-searchbar>
 	</div>
 </body>
 
-<!-- Rendering Library -->
-<script type="text/javascript" src="./vue.js"></script>
-<script type="text/javascript" src="./osvc_node.js"></script>	
+<!-- Rendering Library combined with REST API wrapper -->
+<script type="text/javascript" src="./main.min.js"></script>
 
 <!-- Media bar HTML -->
 <script type="text/x-template" id="cti-searchbar">
@@ -23,17 +23,17 @@
 		<div id="cti-search">
 		  <table>
 			<tr>
-			  <td><b>Incoming Call:</b> <input type="text" v-model="phoneNum" /></td>
+			  <td><b>Incoming Call:</b> <input type="text" v-model="phoneNum" v-on:keyup.enter="contactSearch" /></td>
 			  <td><button v-on:click="contactSearch">Accept Call</button></td>
-			  <td><input type="checkbox" v-model="createIncident" id="createInc" name="createInc">Create Incident</td>
+			  <td><input type="checkbox" v-model="createIncident">Create Incident</td>
 			</tr>
 		  </table>
 		</div>		
 		<div id="cti-calls">
-			<b>Ongoing Calls:</b><ul style="list-style: none;display:flex" id="calls">			
-				<li v-for="call in ongoingCalls" class='tab' id="call.workspaceRecord.getContextId()" v-on:click="this.findAndFocus(call)" >
-					<div class='focus'>{{call.phoneNum}}</div>
-					<sup><i class='fa fa-window-close' v-on:click='closeCurrentWorkspace(call)'></i></sup>
+			<b>Ongoing Calls:</b><ul class="ongoing-calls">			
+				<li v-for="workspaceRecord in workspaceRecordMap" class='tab' :key="workspaceRecord.getContextId()" :id="workspaceRecord.getContextId()" >
+					<div class='focus' v-on:click="findAndFocus(workspaceRecord)">{{thisPhoneNumber(workspaceRecord.getContextId())}}</div>
+					<sup><i class='fa fa-window-close' v-on:click='closeCurrentWorkspace(workspaceRecord)'></i></sup>
 				</li>
 			</ul>
 		</div>
@@ -41,7 +41,10 @@
 </script>
 
 <script>
+	// Load REST API wrapper Library
 	const osvcNode = require('osvc_node');
+
+	// Create custom CTI component
 	Vue.component('cti-searchbar', {
 		
 		// Specifies the template
@@ -51,12 +54,20 @@
 		data: ()=> ({
 			phoneNum: "",
 			createIncident: false,
-			ongoingCalls: [],
+			workspaceRecordMap: {},
+			phoneNumberMap: {},
 			rnClient: {},
 		}),
 
+		// When the component is created
+		// Create the context data
 	  	created: async function(){
-			await this.contextData()
+			await this.contextData();
+
+			// refresh the console data every 14 minutes
+			// to refresh the session token for the API
+			var vm = this;
+			setInterval(async function(){ await vm.contextData(); }, 84000);
 	  	},
 
 	  	methods:{
@@ -73,12 +84,10 @@
 	  		// performs the contact search
 			contactSearch: async function(){
 				console.log(`Button Clicked! ${this.phoneNum} -- ${this.createIncident}`);		
-				if(this.phoneNum == "") 
-				{
+				if(this.phoneNum == ""){
 					alert("Please enter a phone number!");
 					return;
-				}
-				else {
+				}else {
 					//lookup contact					
 					let jsonData = await this.contactLookup(this.rnClient,this.phoneNum);			
 					if(jsonData.length === 0){
@@ -86,6 +95,8 @@
 					}else if(jsonData.length === 1){
 						await this.matchedCreateOrOpen(this.createIncident,jsonData);
 					}else{
+						// add case for
+						// multiple phone numbers
 						await this.openReport();
 					}
 				}
@@ -99,7 +110,7 @@
 				} else {
 					let contactJsonObj = await this.createContactRecord(this.rnClient,this.phoneNum);
 					let incidentJsonObj = await this.createIncidentRecord(this.rnClient,contactJsonObj.id);
-					await this.openWorkspaceRecord('Incident',incidentJsonObj.id,this.phoneNum);
+					await this.openWorkspaceRecord('Incident', incidentJsonObj.id,this.phoneNum);
 				}
 			},
 
@@ -127,33 +138,49 @@
 				});
 			},
 
-			// more for adding a button than anything else
+			// Adds a button to keep track of the incidents by phone number
 			openWorkspaceRecord: async function(workspaceType,contactId,phoneNum){
+				let vm = this;
 				let extensionProvider = await ORACLE_SERVICE_CLOUD.extension_loader.load("Sample_CTI_MediaBar_Extension", "1");
-				extensionProvider.registerWorkspaceExtension((workspaceRecord) => {
-					workspaceRecord.editWorkspaceRecord(workspaceType,contactId,function(workspaceRecord){
-						this.addWorkspaceButton(workspaceRecord,phoneNum);
+				extensionProvider.registerWorkspaceExtension((newWorkspaceRecord) => {
+					console.log("newWorkspaceRecord is:");
+					console.log(newWorkspaceRecord);
+					newWorkspaceRecord.editWorkspaceRecord(workspaceType,contactId,function(workspaceRecord){
+						vm.addWorkspaceButton(workspaceRecord,phoneNum);
 					});
+					console.log(vm.workspaceRecordMap);
 				});
 			},
 
 			// open contact workspace record..
 			openContactRecord: async function(recordID,phoneNum){
 				console.log("Opening record ID : " + recordID);
+				let vm = this;
 				let extensionProvider = await ORACLE_SERVICE_CLOUD.extension_loader.load("MSE_CTI_MediaBar" , "1")
-				extensionProvider.registerWorkspaceExtension(function(WorkspaceRecord) {						
+				extensionProvider.registerWorkspaceExtension(function(newWorkspaceRecord) {
 					if(recordID === 0) { //new record
-						WorkspaceRecord.createWorkspaceRecord('Contact', function(workspaceRecord){
-							this.addWorkspaceButton(workspaceRecord,phoneNum);
+						newWorkspaceRecord.createWorkspaceRecord('Contact', function(workspaceRecord){
+							vm.addWorkspaceButton(workspaceRecord,phoneNum);
 							//set phone field
-							WorkspaceRecord.updateField('Contact.PhOffice', phoneNum);
+							newWorkspaceRecord.updateField('Contact.PhOffice', phoneNum);
 						}); 
 					}
 					else {
-						WorkspaceRecord.editWorkspaceRecord('Contact', recordID, function(workspaceRecord){
-							this.addWorkspaceButton(workspaceRecord,phoneNum);
+						newWorkspaceRecord.editWorkspaceRecord('Contact', recordID, function(workspaceRecord){
+							vm.addWorkspaceButton(workspaceRecord,phoneNum);
 						});
 					}
+				});
+			},
+
+			// Adds a listener
+			// for when the contact record closes
+			addCloseButtonListener: function(workspaceRecord){
+				let vm = this;
+				workspaceRecord.addRecordClosingListener(function(workspaceRecordEventParam){
+					let getContextId = workspaceRecordEventParam.workspaceRecord.getContextId();
+					Vue.delete(vm.workspaceRecordMap, getContextId);
+					Vue.delete(vm.phoneNumberMap, getContextId);
 				});
 			},
 
@@ -218,27 +245,33 @@
 			},
 
 			addWorkspaceButton: function(workspaceRecord,phoneNum){
-				this.ongoingCalls.push({phoneNum: phoneNum, workspaceRecord: workspaceRecord});
+				Vue.set(this.workspaceRecordMap, workspaceRecord.getContextId(), workspaceRecord);
+				Vue.set(this.phoneNumberMap, workspaceRecord.getContextId(), phoneNum);
+				this.addCloseButtonListener(workspaceRecord);
 			},
 
 			// focus on the call workspace based 
 			// on the phone number that is clicked on
-	  		findAndFocus: function (call){
-	  			let workspaceRecord = call.workspaceRecord;
+	  		findAndFocus: function (workspaceRecord){
 				workspaceRecord.findAndFocus(workspaceRecord.getWorkspaceRecordType(),workspaceRecord.getWorkspaceRecordId());
 			},
 
-			closeCurrentWorkspace: async function(call){
-				let workspaceRecord = call.workspaceRecord;
-				let contextId = workspaceRecord.getContextId();
-				await workspaceRecord.closeEditor();
-				document.getElementById(contextId).remove();
-				this.calls.splice(this.calls.indexOf(call),1);
-				return false;
-			}
-	  	}
+			closeCurrentWorkspace: function(workspaceRecord){
+				let vm = this;
+				let getContextId = workspaceRecord.getContextId();
+				workspaceRecord.closeEditor().then(function(){
+					Vue.delete(vm.workspaceRecordMap, getContextId);
+					Vue.delete(vm.phoneNumberMap, getContextId);
+				}).catch(err =>{
+					console.log(err);
+				})
+			},
+	  		thisPhoneNumber: function(contextId){
+	  			return this.phoneNumberMap[contextId];
+	  		}
+	  	},
 	});
-
+	
 	new Vue({
 	  el: '#cti-container',
 	});
