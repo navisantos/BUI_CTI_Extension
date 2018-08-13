@@ -143,12 +143,9 @@
 				let vm = this;
 				let extensionProvider = await ORACLE_SERVICE_CLOUD.extension_loader.load("Sample_CTI_MediaBar_Extension", "1");
 				extensionProvider.registerWorkspaceExtension((newWorkspaceRecord) => {
-					console.log("newWorkspaceRecord is:");
-					console.log(newWorkspaceRecord);
 					newWorkspaceRecord.editWorkspaceRecord(workspaceType,contactId,function(workspaceRecord){
 						vm.addWorkspaceButton(workspaceRecord,phoneNum);
 					});
-					console.log(vm.workspaceRecordMap);
 				});
 			},
 
@@ -170,17 +167,6 @@
 							vm.addWorkspaceButton(workspaceRecord,phoneNum);
 						});
 					}
-				});
-			},
-
-			// Adds a listener
-			// for when the contact record closes
-			addCloseButtonListener: function(workspaceRecord){
-				let vm = this;
-				workspaceRecord.addRecordClosingListener(function(workspaceRecordEventParam){
-					let getContextId = workspaceRecordEventParam.workspaceRecord.getContextId();
-					Vue.delete(vm.workspaceRecordMap, getContextId);
-					Vue.delete(vm.phoneNumberMap, getContextId);
 				});
 			},
 
@@ -244,6 +230,18 @@
 				})
 			},
 
+			// Adds a listener
+			// for when the contact record closes
+			addCloseButtonListener: function(workspaceRecord){
+				let vm = this;
+				workspaceRecord.addRecordClosingListener(function(workspaceRecordEventParam){
+					let getContextId = workspaceRecordEventParam.workspaceRecord.getContextId();
+					Vue.delete(vm.workspaceRecordMap, getContextId);
+					Vue.delete(vm.phoneNumberMap, getContextId);
+				});
+			},
+
+			// Adds a button to correlate with the works space that's opened up
 			addWorkspaceButton: function(workspaceRecord,phoneNum){
 				Vue.set(this.workspaceRecordMap, workspaceRecord.getContextId(), workspaceRecord);
 				Vue.set(this.phoneNumberMap, workspaceRecord.getContextId(), phoneNum);
